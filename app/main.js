@@ -4,23 +4,65 @@ import htm from 'https://esm.sh/htm@3.1.1'
 
 const html = htm.bind(React.createElement)
 
+function formatNumber(value, digits = 2) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
+  return Number(value).toLocaleString(undefined, { maximumFractionDigits: digits })
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${Number(value).toFixed(2)}%`
+}
+
+function statusLabel(status) {
+  if (!status) return 'unknown'
+  if (status.ok && !status.usedFallback) return 'live'
+  if (status.usedFallback) return 'fallback'
+  return 'degraded'
+}
+
 function App() {
-  const lastUpdated = useMemo(() => new Date().toISOString(), [])
-  const buildRandom = useMemo(() => {
-    return {
-      value: Math.floor(Math.random() * 1000),
-      generatedAt: new Date().toISOString(),
+  const [dashboard, setDashboard] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const fetchDashboard = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const response = await fetch('/api/dashboard')
+      if (!response.ok) {
+        throw new Error(`Dashboard fetch failed (${response.status})`)
+      }
+      const payload = await response.json()
+      setDashboard(payload)
+    } catch (fetchError) {
+      console.error(fetchError)
+      setError(fetchError instanceof Error ? fetchError.message : 'Unknown dashboard error')
+    } finally {
+      setLoading(false)
     }
+  }
+
+  useEffect(() => {
+    fetchDashboard()
   }, [])
-  const stats = useMemo(
-    () => ({
-      totalUsers: 12345,
-      activeUsers: 3210,
-      revenue: 123456,
-      growthRate: 2.4,
-    }),
-    []
-  )
+
+  const lastUpdated = useMemo(() => {
+    if (!dashboard?.generatedAt) return '—'
+    return new Date(dashboard.generatedAt).toLocaleString()
+  }, [dashboard])
+
+  const regime = dashboard?.overview?.regime || {}
+  const macroCards = dashboard?.overview?.macroCards || []
+  const events = dashboard?.overview?.events || []
+  const crossAsset = dashboard?.overview?.crossAssetHeatStrip || []
+  const perp = dashboard?.overview?.perp || []
+  const onchain = dashboard?.overview?.onchain || { topChains: [], bridgeTotals: [] }
+  const narratives = dashboard?.overview?.narratives || { trendingCoins: [] }
+  const sourceStatuses = dashboard?.sourceStatuses || []
+  const fallbackCount = sourceStatuses.filter((status) => status.usedFallback).length
 
   return html`
     <div className="page">
@@ -28,25 +70,139 @@ function App() {
       <${Header} />
       <main className="container">
         <div className="page-header">
-          <p className="muted mono">Last updated: ${new Date(lastUpdated).toLocaleString()}</p>
+          <p className="muted mono">Last updated: ${lastUpdated}</p>
         </div>
+
         <section className="card-row">
           <div className="card">
-            <div className="card-label mono">Build-time value (static)</div>
-            <div className="card-value">${buildRandom.value}</div>
-            <div className="muted mono">${new Date(buildRandom.generatedAt).toLocaleString()}</div>
+            <div className="card-label mono">Dashboard feed status</div>
+            <div className="card-value">${loading ? 'Loading…' : error ? 'Attention needed' : 'Live feed active'}</div>
+            <div className="card-actions">
+              <span className="muted mono">${error || `${sourceStatuses.length} sources checked • ${fallbackCount} fallback`}</span>
+              <button className="button button-orange" onClick=${fetchDashboard}>Refresh</button>
+            </div>
           </div>
-          <${RuntimeRandom} />
+
+          <div className="card">
+            <div className="card-label mono">Key macro risk this week</div>
+            <div className="card-value">${regime.keyRisk || '—'}</div>
+            <div className="muted mono">${regime.policy || '—'}</div>
+          </div>
         </section>
+
         <section className="grid">
-          <${StatCard} label="Total Users" value=${stats.totalUsers.toLocaleString()} />
-          <${StatCard} label="Active Users" value=${stats.activeUsers.toLocaleString()} />
-          <${StatCard} label="Revenue" value=${`$${stats.revenue.toLocaleString()}`} />
-          <${StatCard} label="Growth Rate" value=${`${stats.growthRate}%`} />
+          <div className="card">
+            <div className="card-label mono">Source health board</div>
+            ${sourceStatuses.map(
+              (status, index) => html`
+                <div className="card-actions" key=${`${status.source}-${index}`}>
+                  <span className="mono">${status.source}</span>
+                  <span className="muted mono">${statusLabel(status)} • ${status.message}</span>
+                </div>
+              `
+            )}
+          </div>
+
+          <${RegimeCard} label="Growth" value=${regime.growth} />
+          <${RegimeCard} label="Inflation" value=${regime.inflation} />
+          <${RegimeCard} label="Dollar" value=${regime.dollar} />
+          <${RegimeCard} label="Commodity Pressure" value=${regime.commodity} />
         </section>
+
         <section className="grid">
-          <div className="card">Overview charts placeholder</div>
-          <div className="card">Trend chart placeholder</div>
+          <div className="card">
+            <div className="card-label mono">Macro regime monitor</div>
+            ${macroCards.slice(0, 7).map(
+              (item) => html`
+                <div className="card-actions" key=${item.id}>
+                  <span className="mono">${item.label}</span>
+                  <span className="muted mono">
+                    ${formatNumber(item.latest)} (Δ ${formatNumber(item.delta)}) • trend ${formatNumber(item.trend)} • next ${item.nextRelease || '—'}
+                  </span>
+                </div>
+              `
+            )}
+            ${macroCards.length
+              ? html`<div className="muted mono">${macroCards[0].why}</div>`
+              : html``}
+          </div>
+
+          <div className="card">
+            <div className="card-label mono">Event calendar (next 7d)</div>
+            ${events.length
+              ? events.map(
+                  (event, index) => html`
+                    <div className="card-actions" key=${`${event.event}-${index}`}>
+                      <span className="mono">${event.event}</span>
+                      <span className="muted mono">${new Date(event.date).toLocaleString()} • ${event.status}</span>
+                    </div>
+                  `
+                )
+              : html`<div className="muted mono">No events available.</div>`}
+          </div>
+        </section>
+
+        <section className="grid">
+          <div className="card">
+            <div className="card-label mono">Cross-asset heat strip</div>
+            ${crossAsset.map(
+              (row) => html`
+                <div className="card-actions" key=${row.key}>
+                  <a className="mono" href=${row.deepLink} target="_blank" rel="noreferrer">${row.label}</a>
+                  <span className="muted mono">${formatNumber(row.latest)} | 1d ${formatPercent(row.d1)} | 1m ${formatPercent(row.m1)} | ${row.regimeTag}</span>
+                </div>
+              `
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-label mono">Perp structure (Hyperliquid)</div>
+            ${perp.slice(0, 12).map(
+              (row, index) => html`
+                <div className="card-actions" key=${`${row.name}-${index}`}>
+                  <a className="mono" href=${row.link} target="_blank" rel="noreferrer">${row.name}</a>
+                  <span className="muted mono">Funding ${formatPercent((row.funding ?? 0) * 100)} | OI ${formatNumber(row.openInterest)} | ${row.tag}</span>
+                </div>
+              `
+            )}
+          </div>
+        </section>
+
+        <section className="grid">
+          <div className="card">
+            <div className="card-label mono">Onchain / flows confirmation</div>
+            <div className="muted mono">Stablecoin ecosystem concentration</div>
+            ${onchain.topChains.map(
+              (item, index) => html`
+                <div className="card-actions" key=${`${item.chain}-${index}`}>
+                  <span className="mono">${item.chain}</span>
+                  <span className="muted mono">${formatNumber(item.mcap, 0)}</span>
+                </div>
+              `
+            )}
+            <div className="muted mono">Bridge flow shifts (24h)</div>
+            ${onchain.bridgeTotals.map(
+              (item, index) => html`
+                <div className="card-actions" key=${`${item.chain}-bridge-${index}`}>
+                  <span className="mono">${item.chain}</span>
+                  <span className="muted mono">${formatNumber(item.inflow24h)}</span>
+                </div>
+              `
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-label mono">Narrative movers</div>
+            <div className="muted mono">Trending crypto topics proxy (CoinGecko)</div>
+            ${narratives.trendingCoins.map(
+              (coin, index) => html`
+                <div className="card-actions" key=${`${coin.symbol}-${index}`}>
+                  <span className="mono">${coin.name} (${coin.symbol})</span>
+                  <span className="muted mono">Rank #${coin.marketCapRank ?? '—'} • Score ${formatNumber(coin.score)}</span>
+                </div>
+              `
+            )}
+          </div>
         </section>
       </main>
       <${Footer} />
@@ -81,49 +237,11 @@ function Footer() {
   `
 }
 
-function StatCard({ label, value }) {
+function RegimeCard({ label, value }) {
   return html`
     <div className="card">
       <div className="card-label mono">${label}</div>
-      <div className="card-value">${value}</div>
-    </div>
-  `
-}
-
-function RuntimeRandom() {
-  const [value, setValue] = useState(null)
-  const [generatedAt, setGeneratedAt] = useState(null)
-  const [loading, setLoading] = useState(false)
-
-  const fetchRuntime = async () => {
-    setLoading(true)
-    try {
-      const response = await fetch('/api/random')
-      if (!response.ok) {
-        throw new Error('Failed to fetch runtime random')
-      }
-      const json = await response.json()
-      setValue(json.value)
-      setGeneratedAt(json.generatedAt)
-    } catch (error) {
-      console.error(error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    fetchRuntime()
-  }, [])
-
-  return html`
-    <div className="card">
-      <div className="card-label mono">Runtime value (client-side)</div>
-      <div className="card-value">${loading ? '...' : value ?? '—'}</div>
-      <div className="card-actions">
-        <span className="muted mono">${generatedAt ? new Date(generatedAt).toLocaleString() : ''}</span>
-        <button className="button button-orange" onClick=${fetchRuntime}>Refresh</button>
-      </div>
+      <div className="card-value">${value || '—'}</div>
     </div>
   `
 }
