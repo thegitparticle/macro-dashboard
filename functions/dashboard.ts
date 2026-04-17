@@ -1,16 +1,22 @@
-const http = require('http')
-const fs = require('fs')
-const path = require('path')
-const url = require('url')
+type JsonRecord = Record<string, unknown>
 
-const port = process.env.PORT ? Number(process.env.PORT) : 5173
-const rootDir = __dirname
+type PricePoint = {
+  symbol: string
+  latest: number | null
+  previous: number | null
+  oneDay: number | null
+  fiveDay: number | null
+  oneMonth: number | null
+  threeMonth: number | null
+  currency?: string
+}
 
-const contentTypes = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
+type MacroSeries = {
+  id: string
+  label: string
+  values: number[]
+  dates: string[]
+  unit: string
 }
 
 const YAHOO_SYMBOLS = [
@@ -42,42 +48,44 @@ const MACRO_SERIES = [
   { id: 'UNRATE', label: 'US Unemployment Rate', unit: '%' },
 ]
 
-async function getJson(apiUrl, init) {
-  const response = await fetch(apiUrl, init)
+async function getJson(url: string, init?: RequestInit) {
+  const response = await fetch(url, init)
   if (!response.ok) {
-    throw new Error(`Request failed ${response.status}`)
+    throw new Error(`Request failed ${response.status} for ${url}`)
   }
   return response.json()
 }
 
-async function getText(apiUrl) {
-  const response = await fetch(apiUrl)
+async function getText(url: string) {
+  const response = await fetch(url)
   if (!response.ok) {
-    throw new Error(`Request failed ${response.status}`)
+    throw new Error(`Request failed ${response.status} for ${url}`)
   }
   return response.text()
 }
 
-function safeNumber(value) {
+function safeNumber(value: unknown): number | null {
   const num = Number(value)
   return Number.isFinite(num) ? num : null
 }
 
-function nthFromEnd(values, n) {
-  if (values.length < n) return null
-  return values[values.length - n] ?? null
-}
-
-function percentChange(latest, prior) {
+function percentChange(latest: number | null, prior: number | null): number | null {
   if (latest === null || prior === null || prior === 0) return null
   return ((latest - prior) / Math.abs(prior)) * 100
 }
 
-async function fetchYahooSeries(symbol) {
+function nthFromEnd(values: number[], n: number): number | null {
+  if (values.length < n) return null
+  return values[values.length - n] ?? null
+}
+
+async function fetchYahooSeries(symbol: string): Promise<PricePoint> {
   const encoded = encodeURIComponent(symbol)
-  const payload = await getJson(`https://query1.finance.yahoo.com/v8/finance/chart/${encoded}?interval=1d&range=6mo`)
-  const result = payload?.chart?.result?.[0]
-  const closes = (result?.indicators?.quote?.[0]?.close ?? []).map(safeNumber).filter((x) => x !== null)
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encoded}?interval=1d&range=6mo`
+  const payload = (await getJson(url)) as JsonRecord
+  const result = ((payload.chart as JsonRecord)?.result as JsonRecord[] | undefined)?.[0]
+  const quote = ((result?.indicators as JsonRecord)?.quote as JsonRecord[] | undefined)?.[0]
+  const closes = ((quote?.close as unknown[]) ?? []).map(safeNumber).filter((x): x is number => x !== null)
 
   const latest = nthFromEnd(closes, 1)
   const previous = nthFromEnd(closes, 2)
@@ -96,11 +104,9 @@ async function fetchYahooSeries(symbol) {
   }
 }
 
-function parseFredCsv(csv, id, label, unit) {
-  const rows = csv
-    .trim()
-    .split('\n')
-    .slice(1)
+function parseFredCsv(csv: string, id: string, label: string, unit: string): MacroSeries {
+  const lines = csv.trim().split('\n').slice(1)
+  const rows = lines
     .map((line) => line.split(','))
     .filter((parts) => parts.length >= 2)
     .map(([date, value]) => ({ date, value: safeNumber(value) }))
@@ -111,17 +117,17 @@ function parseFredCsv(csv, id, label, unit) {
     id,
     label,
     unit,
-    dates: tail.map((row) => row.date),
-    values: tail.map((row) => row.value),
+    dates: tail.map((r) => r.date),
+    values: tail.map((r) => r.value as number),
   }
 }
 
-async function fetchMacroSeries(seriesId, label, unit) {
+async function fetchMacroSeries(seriesId: string, label: string, unit: string) {
   const csv = await getText(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(seriesId)}`)
   return parseFredCsv(csv, seriesId, label, unit)
 }
 
-function deriveRegime(macro, prices) {
+function deriveRegime(macro: MacroSeries[], prices: Record<string, PricePoint>) {
   const byId = Object.fromEntries(macro.map((item) => [item.id, item]))
   const twoY = nthFromEnd(byId.DGS2?.values ?? [], 1)
   const tenY = nthFromEnd(byId.DGS10?.values ?? [], 1)
@@ -132,19 +138,22 @@ function deriveRegime(macro, prices) {
   const spx = prices.spx?.oneMonth ?? null
 
   const riskTone = spx !== null && spx > 0 ? 'Risk-on bias' : 'Risk-off / defensive'
+  const inflation = cpiTrend > 0 ? 'Inflation pressure rising' : 'Disinflation bias'
+  const policy = curve !== null && curve < 0 ? 'Restrictive / inverted curve' : 'Normalizing curve'
+  const dollar = dxy !== null && dxy > 0 ? 'Dollar tightening' : 'Dollar easing'
 
   return {
     growth: riskTone,
-    inflation: cpiTrend > 0 ? 'Inflation pressure rising' : 'Disinflation bias',
-    policy: curve !== null && curve < 0 ? 'Restrictive / inverted curve' : 'Normalizing curve',
-    dollar: dxy !== null && dxy > 0 ? 'Dollar tightening' : 'Dollar easing',
-    commodity: prices.oil?.oneMonth !== null && prices.oil.oneMonth > 0 ? 'Energy pressure up' : 'Commodity pressure moderate',
+    inflation,
+    policy,
+    dollar,
+    commodity: prices.oil?.oneMonth !== null && (prices.oil?.oneMonth as number) > 0 ? 'Energy pressure up' : 'Commodity pressure moderate',
     riskTone,
     keyRisk: curve !== null && curve < -0.3 ? 'Deep curve inversion vs growth-sensitive risk assets' : 'Watch macro event volatility and dollar reversal',
   }
 }
 
-function buildCrossAssetRows(prices) {
+function buildCrossAssetRows(prices: Record<string, PricePoint>) {
   return YAHOO_SYMBOLS.map(({ key, label, symbol }) => ({
     key,
     label,
@@ -155,25 +164,15 @@ function buildCrossAssetRows(prices) {
     m1: prices[key]?.oneMonth ?? null,
     m3: prices[key]?.threeMonth ?? null,
     regimeTag:
-      prices[key]?.oneMonth === null ? 'Unavailable' : prices[key].oneMonth > 2 ? 'Strong' : prices[key].oneMonth < -2 ? 'Weak' : 'Neutral',
+      prices[key]?.oneMonth === null
+        ? 'Unavailable'
+        : (prices[key]?.oneMonth as number) > 2
+          ? 'Strong'
+          : (prices[key]?.oneMonth as number) < -2
+            ? 'Weak'
+            : 'Neutral',
     deepLink: `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`,
   }))
-}
-
-function mapMacroCards(series) {
-  return series.map((item) => {
-    const latest = nthFromEnd(item.values, 1)
-    const previous = nthFromEnd(item.values, 2)
-    return {
-      id: item.id,
-      label: item.label,
-      latest,
-      previous,
-      delta: latest !== null && previous !== null ? latest - previous : null,
-      lastDate: nthFromEnd(item.dates, 1),
-      why: `Tracks ${item.label.toLowerCase()} as a regime input for crypto perps.`,
-    }
-  })
 }
 
 async function fetchEventCalendar() {
@@ -181,10 +180,8 @@ async function fetchEventCalendar() {
     const now = new Date()
     const from = now.toISOString().slice(0, 10)
     const inSeven = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-    const items = await getJson(
-      `https://api.tradingeconomics.com/calendar/country/united%20states?f=json&c=guest:guest&d1=${from}&d2=${inSeven}`
-    )
-
+    const url = `https://api.tradingeconomics.com/calendar/country/united%20states?f=json&c=guest:guest&d1=${from}&d2=${inSeven}`
+    const items = ((await getJson(url)) as JsonRecord[]) || []
     return items
       .filter((item) => ['High', 'Medium'].includes(String(item.Importance ?? '')))
       .slice(0, 10)
@@ -204,27 +201,34 @@ async function fetchEventCalendar() {
 
 async function fetchPerpStructure() {
   try {
-    const response = await getJson('https://api.hyperliquid.xyz/info', {
+    const response = (await getJson('https://api.hyperliquid.xyz/info', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'metaAndAssetCtxs' }),
-    })
+    })) as unknown[]
 
-    const universe = response?.[0]?.universe ?? []
-    const contexts = response?.[1] ?? []
+    const universe = ((response?.[0] as JsonRecord)?.universe as JsonRecord[]) || []
+    const contexts = (response?.[1] as JsonRecord[]) || []
 
     return universe
       .map((asset, index) => {
         const ctx = contexts[index] || {}
         const funding = safeNumber(ctx.funding)
+        const oi = safeNumber(ctx.openInterest)
+        const change24h = safeNumber(ctx.dayNtlVlm)
         return {
           name: asset.name,
           funding,
-          openInterest: safeNumber(ctx.openInterest),
-          dayVolume: safeNumber(ctx.dayNtlVlm),
+          openInterest: oi,
+          dayVolume: change24h,
           markPx: safeNumber(ctx.markPx),
           oraclePx: safeNumber(ctx.oraclePx),
-          tag: funding !== null && Math.abs(funding) > 0.0006 ? (funding > 0 ? 'Crowded longs' : 'Crowded shorts') : 'Balanced',
+          tag:
+            funding !== null && Math.abs(funding) > 0.0006
+              ? funding > 0
+                ? 'Crowded longs'
+                : 'Crowded shorts'
+              : 'Balanced',
           link: `https://app.hyperliquid.xyz/trade/${asset.name}`,
         }
       })
@@ -241,15 +245,19 @@ async function fetchOnchainSummary() {
       getJson('https://bridges.llama.fi/overview?includeChains=true'),
     ])
 
-    const topChains = (stablecoins?.peggedAssets ?? []).slice(0, 5).map((chain) => ({
-      chain: chain.name,
-      mcap: safeNumber(chain?.circulating?.peggedUSD),
-    }))
+    const topChains = (((stablecoins as JsonRecord).peggedAssets as JsonRecord[]) ?? [])
+      .slice(0, 5)
+      .map((chain) => ({
+        chain: chain.name,
+        mcap: safeNumber(chain.circulating?.peggedUSD),
+      }))
 
-    const bridgeTotals = (bridges?.chains ?? []).slice(0, 5).map((item) => ({
-      chain: item.name,
-      inflow24h: safeNumber(item.dayChange),
-    }))
+    const bridgeTotals = (((bridges as JsonRecord).chains as JsonRecord[]) ?? [])
+      .slice(0, 5)
+      .map((item) => ({
+        chain: item.name,
+        inflow24h: safeNumber(item.dayChange),
+      }))
 
     return { topChains, bridgeTotals }
   } catch {
@@ -259,33 +267,52 @@ async function fetchOnchainSummary() {
 
 async function fetchNarratives() {
   try {
-    const data = await getJson('https://api.coingecko.com/api/v3/search/trending')
-    const trendingCoins = (data?.coins ?? []).slice(0, 7).map((item) => ({
-      name: item?.item?.name,
-      symbol: item?.item?.symbol,
-      marketCapRank: item?.item?.market_cap_rank,
-      score: item?.item?.score,
+    const data = (await getJson(
+      'https://api.coingecko.com/api/v3/search/trending?x_cg_demo_api_key=CG-demo-api-key'
+    )) as JsonRecord
+
+    const coins = ((data.coins as JsonRecord[]) ?? []).slice(0, 7).map((item) => ({
+      name: (item.item as JsonRecord)?.name,
+      symbol: (item.item as JsonRecord)?.symbol,
+      marketCapRank: (item.item as JsonRecord)?.market_cap_rank,
+      score: (item.item as JsonRecord)?.score,
     }))
-    return { trendingCoins }
+
+    return { trendingCoins: coins }
   } catch {
     return { trendingCoins: [] }
   }
 }
 
-async function buildDashboardPayload() {
+function mapMacroCards(series: MacroSeries[]) {
+  return series.map((item) => {
+    const latest = nthFromEnd(item.values, 1)
+    const previous = nthFromEnd(item.values, 2)
+    return {
+      id: item.id,
+      label: item.label,
+      latest,
+      previous,
+      delta: latest !== null && previous !== null ? latest - previous : null,
+      lastDate: nthFromEnd(item.dates, 1),
+      why: `Tracks ${item.label.toLowerCase()} as a regime input for crypto perps.`,
+    }
+  })
+}
+
+export async function onRequest() {
   const priceEntries = await Promise.all(
     YAHOO_SYMBOLS.map(async ({ key, symbol }) => {
       try {
         const data = await fetchYahooSeries(symbol)
-        return [key, data]
+        return [key, data] as const
       } catch {
-        return [key, { symbol, latest: null, previous: null, oneDay: null, fiveDay: null, oneMonth: null, threeMonth: null }]
+        return [key, { symbol, latest: null, previous: null, oneDay: null, fiveDay: null, oneMonth: null, threeMonth: null }] as const
       }
     })
   )
 
   const prices = Object.fromEntries(priceEntries)
-
   const macroSeries = await Promise.all(
     MACRO_SERIES.map(async (series) => {
       try {
@@ -303,7 +330,7 @@ async function buildDashboardPayload() {
     fetchNarratives(),
   ])
 
-  return {
+  const payload = {
     generatedAt: new Date().toISOString(),
     overview: {
       regime: deriveRegime(macroSeries, prices),
@@ -315,64 +342,11 @@ async function buildDashboardPayload() {
       narratives,
     },
   }
-}
 
-const server = http.createServer(async (req, res) => {
-  if (!req.url) {
-    res.writeHead(400)
-    res.end('Bad request')
-    return
-  }
-
-  const { pathname } = url.parse(req.url)
-
-  if (pathname === '/api/random') {
-    const payload = {
-      value: Math.floor(Math.random() * 1000),
-      generatedAt: new Date().toISOString(),
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify(payload))
-    return
-  }
-
-  if (pathname === '/api/dashboard') {
-    try {
-      const payload = await buildDashboardPayload()
-      res.writeHead(200, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Cache-Control': 'public, max-age=300',
-      })
-      res.end(JSON.stringify(payload))
-    } catch (error) {
-      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }))
-    }
-    return
-  }
-
-  const safePath = pathname === '/' ? '/index.html' : pathname
-  const filePath = path.join(rootDir, decodeURIComponent(safePath))
-
-  if (!filePath.startsWith(rootDir)) {
-    res.writeHead(403)
-    res.end('Forbidden')
-    return
-  }
-
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      res.writeHead(404)
-      res.end('Not found')
-      return
-    }
-
-    const ext = path.extname(filePath)
-    res.writeHead(200, { 'Content-Type': contentTypes[ext] || 'application/octet-stream' })
-    res.end(data)
+  return new Response(JSON.stringify(payload), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=300',
+    },
   })
-})
-
-server.listen(port, () => {
-  console.log(`Dev server running at http://localhost:${port}`)
-})
+}
