@@ -42,3 +42,5 @@ npx wrangler pages deploy dist --project-name <your-pages-project> --branch main
 `functions/` is still used for Pages Functions at deploy time.
 
 Styling: added orange/green brand tints, dark-mode support and a compact/dense UI toggle for an industrial, information-dense look.
+
+> Deployment note: Pages deploys are triggered from merges to `main`.
