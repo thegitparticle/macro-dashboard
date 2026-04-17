@@ -15,6 +15,13 @@ function formatPercent(value) {
   return `${sign}${Number(value).toFixed(2)}%`
 }
 
+function statusLabel(status) {
+  if (!status) return 'unknown'
+  if (status.ok && !status.usedFallback) return 'live'
+  if (status.usedFallback) return 'fallback'
+  return 'degraded'
+}
+
 function App() {
   const [dashboard, setDashboard] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -54,6 +61,8 @@ function App() {
   const perp = dashboard?.overview?.perp || []
   const onchain = dashboard?.overview?.onchain || { topChains: [], bridgeTotals: [] }
   const narratives = dashboard?.overview?.narratives || { trendingCoins: [] }
+  const sourceStatuses = dashboard?.sourceStatuses || []
+  const fallbackCount = sourceStatuses.filter((status) => status.usedFallback).length
 
   return html`
     <div className="page">
@@ -69,7 +78,7 @@ function App() {
             <div className="card-label mono">Dashboard feed status</div>
             <div className="card-value">${loading ? 'Loading…' : error ? 'Attention needed' : 'Live feed active'}</div>
             <div className="card-actions">
-              <span className="muted mono">${error || 'Macro + cross-asset + perp + onchain + narratives'}</span>
+              <span className="muted mono">${error || `${sourceStatuses.length} sources checked • ${fallbackCount} fallback`}</span>
               <button className="button button-orange" onClick=${fetchDashboard}>Refresh</button>
             </div>
           </div>
@@ -82,6 +91,18 @@ function App() {
         </section>
 
         <section className="grid">
+          <div className="card">
+            <div className="card-label mono">Source health board</div>
+            ${sourceStatuses.map(
+              (status, index) => html`
+                <div className="card-actions" key=${`${status.source}-${index}`}>
+                  <span className="mono">${status.source}</span>
+                  <span className="muted mono">${statusLabel(status)} • ${status.message}</span>
+                </div>
+              `
+            )}
+          </div>
+
           <${RegimeCard} label="Growth" value=${regime.growth} />
           <${RegimeCard} label="Inflation" value=${regime.inflation} />
           <${RegimeCard} label="Dollar" value=${regime.dollar} />
@@ -95,10 +116,15 @@ function App() {
               (item) => html`
                 <div className="card-actions" key=${item.id}>
                   <span className="mono">${item.label}</span>
-                  <span className="muted mono">${formatNumber(item.latest)} (${formatNumber(item.delta)})</span>
+                  <span className="muted mono">
+                    ${formatNumber(item.latest)} (Δ ${formatNumber(item.delta)}) • trend ${formatNumber(item.trend)} • next ${item.nextRelease || '—'}
+                  </span>
                 </div>
               `
             )}
+            ${macroCards.length
+              ? html`<div className="muted mono">${macroCards[0].why}</div>`
+              : html``}
           </div>
 
           <div className="card">
@@ -112,7 +138,7 @@ function App() {
                     </div>
                   `
                 )
-              : html`<div className="muted mono">No live events returned from source.</div>`}
+              : html`<div className="muted mono">No events available.</div>`}
           </div>
         </section>
 
