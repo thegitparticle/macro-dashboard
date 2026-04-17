@@ -1,6 +1,6 @@
 # dashboard-boilerplate
 
-This repo is a dashboard boilerplate demonstrating a Cloudflare Pages Functions backend paired with a lightweight React UI that runs without a build step.
+This repo is a dashboard boilerplate demonstrating a Cloudflare Pages Functions backend paired with a lightweight React UI that runs without a build step in local development.
 
 ## Demo: Runtime random API
 
@@ -15,10 +15,30 @@ A small Cloudflare Pages Function at `functions/random.ts` returns a runtime JSO
 npm run dev
 ```
 
-This starts a tiny Node server (`dev-server.js`) that serves the static frontend and a local `/api/random` endpoint so you can test the runtime tile without Cloudflare Pages.
+This starts a tiny Node server (`dev-server.js`) that serves the static frontend and local API endpoints.
 
-## Production deployment (Cloudflare Pages)
+## Build output for Cloudflare Pages deploy
 
-Cloudflare Pages will serve the frontend files and the `functions/` directory. When deployed, `/api/random` is handled by the Pages Function in `functions/random.ts`.
+Use the build command to stage deployable static assets in `dist/` (only `index.html` and `app/`), which avoids uploading large local folders like `node_modules/` as assets:
+
+```bash
+npm run build
+```
+
+## Cloudflare Pages deployment
+
+Set your project and branch, then run:
+
+```bash
+CF_PAGES_PROJECT=<your-pages-project> CF_PAGES_BRANCH=main npm run deploy:pages
+```
+
+Equivalent direct command:
+
+```bash
+npx wrangler pages deploy dist --project-name <your-pages-project> --branch main
+```
+
+`functions/` is still used for Pages Functions at deploy time.
 
 Styling: added orange/green brand tints, dark-mode support and a compact/dense UI toggle for an industrial, information-dense look.

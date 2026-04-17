@@ -3,6 +3,8 @@
   "private": true,
   "scripts": {
     "dev": "node dev-server.js",
-    "start": "node dev-server.js"
+    "start": "node dev-server.js",
+    "build": "node scripts/build-dist.mjs",
+    "deploy:pages": "npm run build && npx wrangler pages deploy dist --project-name $CF_PAGES_PROJECT --branch $CF_PAGES_BRANCH"
   }
 }
