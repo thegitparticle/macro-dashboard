@@ -318,7 +318,7 @@ async function fetchNarratives() {
   return { trendingCoins: coins }
 }
 
-export async function onRequest() {
+export async function handleDashboard() {
   const sourceStatuses: SourceStatus[] = []
 
   const crossAssetResult = await withStatus('yahoo-finance', FALLBACK_CROSS_ASSET, async () => {
@@ -390,4 +390,8 @@ export async function onRequest() {
       'Cache-Control': 'public, max-age=300',
     },
   })
+}
+
+export async function onRequest() {
+  return handleDashboard()
 }
