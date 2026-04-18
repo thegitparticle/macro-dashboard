@@ -1,10 +1,10 @@
 # dashboard-boilerplate
 
-This repo is a dashboard boilerplate demonstrating a Cloudflare Pages Functions backend paired with a lightweight React UI that runs without a build step in local development.
+This repo is a dashboard boilerplate using a Cloudflare **Worker** backend plus a lightweight React UI that runs without a frontend build step in local development.
 
 ## Demo: Runtime random API
 
-A small Cloudflare Pages Function at `functions/random.ts` returns a runtime JSON payload with a random value. The dashboard demonstrates both:
+A runtime endpoint at `/api/random` returns JSON with a random value. The dashboard demonstrates both:
 
 - A **build-time** random value generated in the client at startup (static for the session).
 - A **runtime** random value fetched from the server (`/api/random`) on each page load or on demand.
@@ -17,30 +17,53 @@ npm run dev
 
 This starts a tiny Node server (`dev-server.js`) that serves the static frontend and local API endpoints.
 
-## Build output for Cloudflare Pages deploy
+## Build output
 
-Use the build command to stage deployable static assets in `dist/` (only `index.html` and `app/`), which avoids uploading large local folders like `node_modules/` as assets:
+Use the build command to stage deployable static assets in `dist/` (only `index.html` and `app/`):
 
 ```bash
 npm run build
 ```
 
-## Cloudflare Pages deployment
+## Cloudflare Workers deployment
 
-Set your project and branch, then run:
+This project now deploys as a Worker with static assets from `dist/` and API routes served by `src/worker.ts`.
+
+Deploy command:
 
 ```bash
-CF_PAGES_PROJECT=<your-pages-project> CF_PAGES_BRANCH=main npm run deploy:pages
+npm run deploy
 ```
 
 Equivalent direct command:
 
 ```bash
-npx wrangler pages deploy dist --project-name <your-pages-project> --branch main
+npm run build && npx wrangler deploy
 ```
 
-`functions/` is still used for Pages Functions at deploy time.
+## Required environment variables for CI
 
-Styling: added orange/green brand tints, dark-mode support and a compact/dense UI toggle for an industrial, information-dense look.
+- `CLOUDFLARE_API_TOKEN` (**required**)
+- `CLOUDFLARE_ACCOUNT_ID` (**recommended**)
 
-> Deployment note: Pages deploys are triggered from merges to `main`.
+No `CF_PAGES_PROJECT` or `CF_PAGES_BRANCH` variables are needed for this Worker-based deployment flow.
+
+## Required API token scope
+
+For this repo's deploy command (`wrangler deploy`):
+
+- **Account / Workers Scripts: Edit** (required)
+
+If deploy auth fails, validate credentials with:
+
+```bash
+npx wrangler whoami
+```
+
+## Why Worker-only works here
+
+- `wrangler.toml` defines a Worker entrypoint (`main = "src/worker.ts"`).
+- `wrangler.toml` also defines static assets (`[assets] directory = "dist"`).
+- `src/worker.ts` routes API paths (`/api/dashboard`, `/api/random`) and serves frontend assets for all other paths.
+
+Styling: orange/green brand tints, dark-mode support and a compact/dense UI toggle for an industrial, information-dense look.

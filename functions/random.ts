@@ -1,4 +1,4 @@
-export async function onRequest(context: { request: Request }) {
+export async function handleRandom(_request?: Request) {
   const value = Math.floor(Math.random() * 1000)
   const payload = { value, generatedAt: new Date().toISOString() }
   return new Response(JSON.stringify(payload), {
@@ -6,4 +6,8 @@ export async function onRequest(context: { request: Request }) {
       'Content-Type': 'application/json',
     },
   })
+}
+
+export async function onRequest(context: { request: Request }) {
+  return handleRandom(context.request)
 }
