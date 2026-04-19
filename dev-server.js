@@ -124,6 +124,30 @@ function parseFredCsv(csv, id, label, unit) {
   }
 }
 
+function parseBlsSeries(payload, seriesId, id, label, unit) {
+  const series = (payload?.Results?.series ?? []).find((row) => String(row?.seriesID ?? '') === seriesId)
+  const rows = series?.data ?? []
+  const observations = rows
+    .map((item) => ({
+      date: `${String(item?.year ?? '')}-${String(item?.period ?? '').replace('M', '')}-01`,
+      value: safeNumber(item?.value),
+      period: String(item?.period ?? ''),
+    }))
+    .filter((row) => row.value !== null && /^M\d{2}$/.test(row.period) && row.period !== 'M13')
+    .sort((a, b) => a.date.localeCompare(b.date))
+
+  if (!observations.length) throw new Error(`empty series: ${id}`)
+  const tail = observations.slice(-6)
+  return {
+    id,
+    label,
+    unit,
+    frequency: 'monthly',
+    dates: tail.map((row) => row.date),
+    values: tail.map((row) => row.value),
+  }
+}
+
 function nextReleaseDate(series) {
   const last = new Date(series.dates[series.dates.length - 1])
   if (series.frequency === 'daily') {
@@ -284,25 +308,43 @@ async function fetchOnchainSummary() {
   return { topChains, bridgeTotals }
 }
 
-function fallbackNarratives() {
+function fallbackSpotPrices() {
   return {
-    trendingCoins: [
-      { name: 'Bitcoin', symbol: 'BTC', marketCapRank: 1, score: 0 },
-      { name: 'Ethereum', symbol: 'ETH', marketCapRank: 2, score: 1 },
-      { name: 'Solana', symbol: 'SOL', marketCapRank: 5, score: 2 },
+    spotPrices: [
+      { symbol: 'BTC', price: 84510, dayChangePct: 1.24 },
+      { symbol: 'ETH', price: 4102, dayChangePct: 0.82 },
+      { symbol: 'SOL', price: 188, dayChangePct: 2.11 },
     ],
   }
 }
 
-async function fetchNarratives() {
-  const data = await getJson('https://api.coingecko.com/api/v3/search/trending')
-  const coins = (data?.coins ?? []).slice(0, 7).map((item) => ({
-    name: item.item?.name,
-    symbol: item.item?.symbol,
-    marketCapRank: item.item?.market_cap_rank,
-    score: item.item?.score,
-  }))
-  return { trendingCoins: coins }
+async function fetchSpotPrices() {
+  const response = await getJson('https://api.hyperliquid.xyz/info', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'spotMetaAndAssetCtxs' }),
+  })
+
+  const universe = (response?.[0]?.universe ?? []).slice(0, 15)
+  const contexts = response?.[1] ?? []
+  const spotPrices = universe
+    .map((asset, index) => {
+      const ctx = contexts[index] ?? {}
+      const rawSymbol = String(asset?.name ?? asset?.coin ?? '').trim()
+      const symbol = rawSymbol.split('/')[0] || rawSymbol || `ASSET-${index + 1}`
+      const price = safeNumber(ctx?.midPx ?? ctx?.markPx ?? ctx?.oraclePx)
+      const prevDayPx = safeNumber(ctx?.prevDayPx)
+      return {
+        symbol,
+        price: price ?? 0,
+        dayChangePct: price !== null && prevDayPx && prevDayPx > 0 ? ((price - prevDayPx) / prevDayPx) * 100 : null,
+      }
+    })
+    .filter((row) => row.price > 0)
+    .slice(0, 7)
+
+  if (!spotPrices.length) throw new Error('no spot prices')
+  return { spotPrices }
 }
 
 async function buildDashboardPayload() {
@@ -327,15 +369,39 @@ async function buildDashboardPayload() {
   })
   sourceStatuses.push(crossAssetResult.status)
 
-  const macroResult = await withStatus('fred-csv', FALLBACK_MACRO, async () => {
-    const seriesDefs = FALLBACK_MACRO.map((s) => ({ id: s.id, label: s.label, unit: s.unit }))
-    const values = await Promise.all(
-      seriesDefs.map(async (series) => {
-        const csv = await getText(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(series.id)}`)
+  const macroResult = await withStatus('macro-open-data', FALLBACK_MACRO, async () => {
+    const yieldDefs = [
+      { id: 'DGS2', label: 'US 2Y Yield', unit: '%', remoteId: 'DGS2' },
+      { id: 'DGS10', label: 'US 10Y Yield', unit: '%', remoteId: 'DGS10' },
+      { id: 'DGS30', label: 'US 30Y Yield', unit: '%', remoteId: 'DGS30' },
+    ]
+    const blsDefs = [
+      { id: 'CPIAUCSL', label: 'US CPI (Headline)', unit: 'idx', remoteId: 'CUSR0000SA0' },
+      { id: 'CPILFESL', label: 'US CPI (Core)', unit: 'idx', remoteId: 'CUSR0000SA0L1E' },
+      { id: 'PAYEMS', label: 'US Nonfarm Payrolls', unit: 'k', remoteId: 'CES0000000001' },
+      { id: 'UNRATE', label: 'US Unemployment Rate', unit: '%', remoteId: 'LNS14000000' },
+    ]
+
+    const yieldValues = await Promise.all(
+      yieldDefs.map(async (series) => {
+        const csv = await getText(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(series.remoteId)}`)
         return parseFredCsv(csv, series.id, series.label, series.unit)
       })
     )
-    return values
+
+    const now = new Date().getUTCFullYear()
+    const blsPayload = await getJson('https://api.bls.gov/publicAPI/v1/timeseries/data/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        seriesid: blsDefs.map((series) => series.remoteId),
+        startyear: String(now - 5),
+        endyear: String(now),
+      }),
+    })
+
+    const blsValues = blsDefs.map((series) => parseBlsSeries(blsPayload, series.remoteId, series.id, series.label, series.unit))
+    return [...yieldValues, ...blsValues]
   })
   sourceStatuses.push(macroResult.status)
 
@@ -348,8 +414,8 @@ async function buildDashboardPayload() {
   const onchainResult = await withStatus('defillama', fallbackOnchain(), fetchOnchainSummary)
   sourceStatuses.push(onchainResult.status)
 
-  const narrativeResult = await withStatus('coingecko', fallbackNarratives(), fetchNarratives)
-  sourceStatuses.push(narrativeResult.status)
+  const spotResult = await withStatus('hyperliquid-spot', fallbackSpotPrices(), fetchSpotPrices)
+  sourceStatuses.push(spotResult.status)
 
   const crossAssetHeatStrip = crossAssetResult.data.map((row) => ({
     ...row,
@@ -367,7 +433,7 @@ async function buildDashboardPayload() {
       events: eventsResult.data,
       perp: perpResult.data,
       onchain: onchainResult.data,
-      narratives: narrativeResult.data,
+      spot: spotResult.data,
     },
   }
 }

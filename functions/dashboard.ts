@@ -18,8 +18,6 @@ type MacroSeries = {
 }
 
 type DashboardEnv = {
-  FRED_API_KEY?: string
-  COINGECKO_DEMO_API_KEY?: string
 }
 
 const FALLBACK_MACRO: MacroSeries[] = [
@@ -76,13 +74,39 @@ function withStatus<T>(source: string, fallback: T, task: () => Promise<T>) {
     }))
 }
 
-function parseFredObservations(payload: JsonRecord, id: string, label: string, unit: string): MacroSeries {
-  const observations = ((payload.observations as JsonRecord[]) ?? [])
-    .map((item) => ({
-      date: String(item.date ?? ''),
-      value: safeNumber(item.value),
-    }))
+function parseFredCsv(csvText: string, id: string, label: string, unit: string): MacroSeries {
+  const lines = csvText.trim().split('\n')
+  const rows = lines
+    .slice(1)
+    .map((line) => line.split(','))
+    .map(([date, value]) => ({ date, value: safeNumber(value) }))
     .filter((row) => row.date && row.value !== null)
+
+  if (!rows.length) throw new Error(`empty series: ${id}`)
+
+  const tail = rows.slice(-6)
+  const frequency = id.startsWith('DG') ? 'daily' : 'monthly'
+  return {
+    id,
+    label,
+    unit,
+    frequency,
+    dates: tail.map((row) => row.date),
+    values: tail.map((row) => row.value as number),
+  }
+}
+
+function parseBlsSeries(payload: JsonRecord, seriesId: string, id: string, label: string, unit: string): MacroSeries {
+  const seriesList = (((payload.Results as JsonRecord)?.series as JsonRecord[]) ?? []).filter((row) => String(row.seriesID ?? '') === seriesId)
+  const rows = (seriesList[0]?.data as JsonRecord[]) ?? []
+  const observations = rows
+    .map((item) => ({
+      date: `${String(item.year ?? '')}-${String(item.period ?? '').replace('M', '')}-01`,
+      value: safeNumber(item.value),
+      period: String(item.period ?? ''),
+    }))
+    .filter((row) => row.value !== null && /^M\d{2}$/.test(row.period) && row.period !== 'M13')
+    .sort((a, b) => a.date.localeCompare(b.date))
 
   if (!observations.length) throw new Error('empty series')
 
@@ -231,54 +255,80 @@ async function fetchOnchainSummary() {
   return { topChains, bridgeTotals }
 }
 
-function fallbackNarratives() {
+function fallbackSpotPrices() {
   return {
-    trendingCoins: [
-      { name: 'Bitcoin', symbol: 'BTC', marketCapRank: 1, score: 0 },
-      { name: 'Ethereum', symbol: 'ETH', marketCapRank: 2, score: 1 },
-      { name: 'Solana', symbol: 'SOL', marketCapRank: 5, score: 2 },
+    spotPrices: [
+      { symbol: 'BTC', price: 84510, dayChangePct: 1.24 },
+      { symbol: 'ETH', price: 4102, dayChangePct: 0.82 },
+      { symbol: 'SOL', price: 188, dayChangePct: 2.11 },
     ],
   }
 }
 
-async function fetchNarratives(env: DashboardEnv) {
-  const headers: Record<string, string> = {}
-  if (env.COINGECKO_DEMO_API_KEY) {
-    headers['x-cg-demo-api-key'] = env.COINGECKO_DEMO_API_KEY
-  }
+async function fetchSpotPrices() {
+  const response = (await getJson('https://api.hyperliquid.xyz/info', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'spotMetaAndAssetCtxs' }),
+  })) as unknown[]
 
-  const data = (await getJson('https://api.coingecko.com/api/v3/search/trending', { headers })) as JsonRecord
-  const coins = ((data.coins as JsonRecord[]) ?? []).slice(0, 7).map((item) => ({
-    name: (item.item as JsonRecord)?.name,
-    symbol: (item.item as JsonRecord)?.symbol,
-    marketCapRank: (item.item as JsonRecord)?.market_cap_rank,
-    score: (item.item as JsonRecord)?.score,
-  }))
-  return { trendingCoins: coins }
+  const universe = (((response?.[0] as JsonRecord)?.universe as JsonRecord[]) ?? []).slice(0, 15)
+  const contexts = (response?.[1] as JsonRecord[]) ?? []
+
+  const spotPrices = universe
+    .map((asset, index) => {
+      const ctx = contexts[index] ?? {}
+      const rawSymbol = String(asset.name ?? asset.coin ?? '').trim()
+      const symbol = rawSymbol.split('/')[0] || rawSymbol || `ASSET-${index + 1}`
+      const price = safeNumber(ctx.midPx ?? ctx.markPx ?? ctx.oraclePx)
+      const prevDayPx = safeNumber(ctx.prevDayPx)
+      const dayChangePct = price !== null && prevDayPx && prevDayPx > 0 ? ((price - prevDayPx) / prevDayPx) * 100 : null
+      return {
+        symbol,
+        price: price ?? 0,
+        dayChangePct,
+      }
+    })
+    .filter((row) => row.price > 0)
+    .slice(0, 7)
+
+  if (!spotPrices.length) throw new Error('no spot prices')
+  return { spotPrices }
 }
 
-async function fetchMacroSeries(env: DashboardEnv) {
-  if (!env.FRED_API_KEY) {
-    throw new Error('missing FRED_API_KEY')
-  }
+async function fetchMacroSeries(_env: DashboardEnv) {
+  const yieldDefs = [
+    { id: 'DGS2', label: 'US 2Y Yield', unit: '%', remoteId: 'DGS2' },
+    { id: 'DGS10', label: 'US 10Y Yield', unit: '%', remoteId: 'DGS10' },
+    { id: 'DGS30', label: 'US 30Y Yield', unit: '%', remoteId: 'DGS30' },
+  ]
+  const blsDefs = [
+    { id: 'CPIAUCSL', label: 'US CPI (Headline)', unit: 'idx', remoteId: 'CUSR0000SA0' },
+    { id: 'CPILFESL', label: 'US CPI (Core)', unit: 'idx', remoteId: 'CUSR0000SA0L1E' },
+    { id: 'PAYEMS', label: 'US Nonfarm Payrolls', unit: 'k', remoteId: 'CES0000000001' },
+    { id: 'UNRATE', label: 'US Unemployment Rate', unit: '%', remoteId: 'LNS14000000' },
+  ]
 
-  const seriesDefs = FALLBACK_MACRO.map((s) => ({ id: s.id, label: s.label, unit: s.unit }))
-
-  const values = await Promise.all(
-    seriesDefs.map(async (series) => {
-      const params = new URLSearchParams({
-        series_id: series.id,
-        api_key: env.FRED_API_KEY as string,
-        file_type: 'json',
-        sort_order: 'asc',
-        limit: '24',
-      })
-      const payload = (await getJson(`https://api.stlouisfed.org/fred/series/observations?${params.toString()}`)) as JsonRecord
-      return parseFredObservations(payload, series.id, series.label, series.unit)
+  const yieldValues = await Promise.all(
+    yieldDefs.map(async (series) => {
+      const csv = await (await fetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(series.remoteId)}`)).text()
+      return parseFredCsv(csv, series.id, series.label, series.unit)
     })
   )
 
-  return values
+  const now = new Date().getUTCFullYear()
+  const blsPayload = (await getJson('https://api.bls.gov/publicAPI/v1/timeseries/data/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      seriesid: blsDefs.map((series) => series.remoteId),
+      startyear: String(now - 5),
+      endyear: String(now),
+    }),
+  })) as JsonRecord
+
+  const blsValues = blsDefs.map((series) => parseBlsSeries(blsPayload, series.remoteId, series.id, series.label, series.unit))
+  return [...yieldValues, ...blsValues]
 }
 
 function emptyCacheSummary() {
@@ -292,14 +342,14 @@ function emptyCacheSummary() {
 
 export async function handleDashboard(env: DashboardEnv = {}) {
   try {
-    const [macroResult, perpResult, onchainResult, narrativeResult] = await Promise.all([
-      withStatus('fred-api', FALLBACK_MACRO, () => fetchMacroSeries(env)),
+    const [macroResult, perpResult, onchainResult, spotResult] = await Promise.all([
+      withStatus('macro-open-data', FALLBACK_MACRO, () => fetchMacroSeries(env)),
       withStatus('hyperliquid', fallbackPerp(), fetchPerpStructure),
       withStatus('defillama', fallbackOnchain(), fetchOnchainSummary),
-      withStatus('coingecko', fallbackNarratives(), () => fetchNarratives(env)),
+      withStatus('hyperliquid-spot', fallbackSpotPrices(), fetchSpotPrices),
     ])
 
-    const sourceStatuses: SourceStatus[] = [macroResult.status, perpResult.status, onchainResult.status, narrativeResult.status]
+    const sourceStatuses: SourceStatus[] = [macroResult.status, perpResult.status, onchainResult.status, spotResult.status]
 
     const payload = {
       generatedAt: nowIso(),
@@ -310,7 +360,7 @@ export async function handleDashboard(env: DashboardEnv = {}) {
         macroCards: mapMacroCards(macroResult.data),
         perp: perpResult.data,
         onchain: onchainResult.data,
-        narratives: narrativeResult.data,
+        spot: spotResult.data,
       },
     }
 
@@ -322,10 +372,10 @@ export async function handleDashboard(env: DashboardEnv = {}) {
     })
   } catch (error) {
     const sourceStatuses: SourceStatus[] = [
-      { source: 'fred-api', ok: false, usedFallback: true, message: 'emergency fallback', updatedAt: nowIso() },
+      { source: 'macro-open-data', ok: false, usedFallback: true, message: 'emergency fallback', updatedAt: nowIso() },
       { source: 'hyperliquid', ok: false, usedFallback: true, message: 'emergency fallback', updatedAt: nowIso() },
       { source: 'defillama', ok: false, usedFallback: true, message: 'emergency fallback', updatedAt: nowIso() },
-      { source: 'coingecko', ok: false, usedFallback: true, message: 'emergency fallback', updatedAt: nowIso() },
+      { source: 'hyperliquid-spot', ok: false, usedFallback: true, message: 'emergency fallback', updatedAt: nowIso() },
     ]
 
     const payload = {
@@ -338,7 +388,7 @@ export async function handleDashboard(env: DashboardEnv = {}) {
         macroCards: mapMacroCards(FALLBACK_MACRO),
         perp: fallbackPerp(),
         onchain: fallbackOnchain(),
-        narratives: fallbackNarratives(),
+        spot: fallbackSpotPrices(),
       },
     }
 
