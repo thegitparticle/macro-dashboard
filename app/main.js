@@ -56,8 +56,6 @@ function App() {
 
   const regime = dashboard?.overview?.regime || {}
   const macroCards = dashboard?.overview?.macroCards || []
-  const events = dashboard?.overview?.events || []
-  const crossAsset = dashboard?.overview?.crossAssetHeatStrip || []
   const perp = dashboard?.overview?.perp || []
   const onchain = dashboard?.overview?.onchain || { topChains: [], bridgeTotals: [] }
   const narratives = dashboard?.overview?.narratives || { trendingCoins: [] }
@@ -92,7 +90,7 @@ function App() {
 
         <section className="grid">
           <div className="card">
-            <div className="card-label mono">Source health board</div>
+            <div className="card-label mono">Source health board (free-only)</div>
             ${sourceStatuses.map(
               (status, index) => html`
                 <div className="card-actions" key=${`${status.source}-${index}`}>
@@ -105,13 +103,13 @@ function App() {
 
           <${RegimeCard} label="Growth" value=${regime.growth} />
           <${RegimeCard} label="Inflation" value=${regime.inflation} />
-          <${RegimeCard} label="Dollar" value=${regime.dollar} />
-          <${RegimeCard} label="Commodity Pressure" value=${regime.commodity} />
+          <${RegimeCard} label="Perp risk tone" value=${regime.riskTone} />
+          <${RegimeCard} label="Policy" value=${regime.policy} />
         </section>
 
         <section className="grid">
           <div className="card">
-            <div className="card-label mono">Macro regime monitor</div>
+            <div className="card-label mono">Macro regime monitor (FRED)</div>
             ${macroCards.slice(0, 7).map(
               (item) => html`
                 <div className="card-actions" key=${item.id}>
@@ -122,37 +120,7 @@ function App() {
                 </div>
               `
             )}
-            ${macroCards.length
-              ? html`<div className="muted mono">${macroCards[0].why}</div>`
-              : html``}
-          </div>
-
-          <div className="card">
-            <div className="card-label mono">Event calendar (next 7d)</div>
-            ${events.length
-              ? events.map(
-                  (event, index) => html`
-                    <div className="card-actions" key=${`${event.event}-${index}`}>
-                      <span className="mono">${event.event}</span>
-                      <span className="muted mono">${new Date(event.date).toLocaleString()} • ${event.status}</span>
-                    </div>
-                  `
-                )
-              : html`<div className="muted mono">No events available.</div>`}
-          </div>
-        </section>
-
-        <section className="grid">
-          <div className="card">
-            <div className="card-label mono">Cross-asset heat strip</div>
-            ${crossAsset.map(
-              (row) => html`
-                <div className="card-actions" key=${row.key}>
-                  <a className="mono" href=${row.deepLink} target="_blank" rel="noreferrer">${row.label}</a>
-                  <span className="muted mono">${formatNumber(row.latest)} | 1d ${formatPercent(row.d1)} | 1m ${formatPercent(row.m1)} | ${row.regimeTag}</span>
-                </div>
-              `
-            )}
+            ${macroCards.length ? html`<div className="muted mono">${macroCards[0].why}</div>` : html``}
           </div>
 
           <div className="card">
@@ -170,7 +138,7 @@ function App() {
 
         <section className="grid">
           <div className="card">
-            <div className="card-label mono">Onchain / flows confirmation</div>
+            <div className="card-label mono">Onchain / flows confirmation (DefiLlama)</div>
             <div className="muted mono">Stablecoin ecosystem concentration</div>
             ${onchain.topChains.map(
               (item, index) => html`
@@ -192,8 +160,8 @@ function App() {
           </div>
 
           <div className="card">
-            <div className="card-label mono">Narrative movers</div>
-            <div className="muted mono">Trending crypto topics proxy (CoinGecko)</div>
+            <div className="card-label mono">Narrative movers (CoinGecko)</div>
+            <div className="muted mono">Trending crypto topics proxy</div>
             ${narratives.trendingCoins.map(
               (coin, index) => html`
                 <div className="card-actions" key=${`${coin.symbol}-${index}`}>

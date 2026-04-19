@@ -3,6 +3,8 @@ import { handleRandom } from '../functions/random'
 
 type Env = {
   ASSETS: Fetcher
+  FRED_API_KEY?: string
+  COINGECKO_DEMO_API_KEY?: string
 }
 
 export default {
@@ -14,7 +16,7 @@ export default {
     }
 
     if (url.pathname === '/api/dashboard') {
-      return handleDashboard()
+      return handleDashboard(env)
     }
 
     return env.ASSETS.fetch(request)
