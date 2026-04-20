@@ -58,7 +58,7 @@ function App() {
   const macroCards = dashboard?.overview?.macroCards || []
   const perp = dashboard?.overview?.perp || []
   const onchain = dashboard?.overview?.onchain || { topChains: [], bridgeTotals: [] }
-  const narratives = dashboard?.overview?.narratives || { trendingCoins: [] }
+  const spot = dashboard?.overview?.spot || { spotPrices: [] }
   const sourceStatuses = dashboard?.sourceStatuses || []
   const fallbackCount = sourceStatuses.filter((status) => status.usedFallback).length
 
@@ -160,13 +160,15 @@ function App() {
           </div>
 
           <div className="card">
-            <div className="card-label mono">Narrative movers (CoinGecko)</div>
-            <div className="muted mono">Trending crypto topics proxy</div>
-            ${narratives.trendingCoins.map(
-              (coin, index) => html`
-                <div className="card-actions" key=${`${coin.symbol}-${index}`}>
-                  <span className="mono">${coin.name} (${coin.symbol})</span>
-                  <span className="muted mono">Rank #${coin.marketCapRank ?? '—'} • Score ${formatNumber(coin.score)}</span>
+            <div className="card-label mono">Spot prices (Hyperliquid)</div>
+            <div className="muted mono">Top spot pairs by Hyperliquid feed</div>
+            ${spot.spotPrices.map(
+              (asset, index) => html`
+                <div className="card-actions" key=${`${asset.symbol}-${index}`}>
+                  <span className="mono">${asset.symbol}</span>
+                  <span className="muted mono">
+                    ${formatNumber(asset.price)} • 24h ${formatPercent(asset.dayChangePct)}
+                  </span>
                 </div>
               `
             )}
