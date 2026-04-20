@@ -15,6 +15,11 @@ function formatPercent(value) {
   return `${sign}${Number(value).toFixed(2)}%`
 }
 
+function formatCompact(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
+  return new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 2 }).format(Number(value))
+}
+
 function statusLabel(status) {
   if (!status) return 'unknown'
   if (status.ok && !status.usedFallback) return 'live'
@@ -58,9 +63,15 @@ function App() {
   const macroCards = dashboard?.overview?.macroCards || []
   const perp = dashboard?.overview?.perp || []
   const onchain = dashboard?.overview?.onchain || { topChains: [], bridgeTotals: [] }
-  const spot = dashboard?.overview?.spot || { spotPrices: [] }
+  const spot = dashboard?.overview?.spot || { spotPrices: [], spotHistory: [] }
   const sourceStatuses = dashboard?.sourceStatuses || []
   const fallbackCount = sourceStatuses.filter((status) => status.usedFallback).length
+  const regimeCards = [
+    { label: 'Growth', value: regime.growth },
+    { label: 'Inflation', value: regime.inflation },
+    { label: 'Perp risk tone', value: regime.riskTone },
+    { label: 'Policy', value: regime.policy },
+  ].filter((item) => typeof item.value === 'string' && item.value.trim().length > 0)
 
   return html`
     <div className="page">
@@ -101,10 +112,9 @@ function App() {
             )}
           </div>
 
-          <${RegimeCard} label="Growth" value=${regime.growth} />
-          <${RegimeCard} label="Inflation" value=${regime.inflation} />
-          <${RegimeCard} label="Perp risk tone" value=${regime.riskTone} />
-          <${RegimeCard} label="Policy" value=${regime.policy} />
+          ${regimeCards.map(
+            (item) => html`<${RegimeCard} key=${item.label} label=${item.label} value=${item.value} />`
+          )}
         </section>
 
         <section className="grid">
@@ -139,6 +149,8 @@ function App() {
         <section className="grid">
           <div className="card">
             <div className="card-label mono">Onchain / flows confirmation (DefiLlama)</div>
+            <div className="muted mono">Stablecoin market cap (daily)</div>
+            <${MiniChart} points=${onchain.stablecoinMcapHistory || []} />
             <div className="muted mono">Stablecoin ecosystem concentration</div>
             ${onchain.topChains.map(
               (item, index) => html`
@@ -148,6 +160,8 @@ function App() {
                 </div>
               `
             )}
+            <div className="muted mono">Bridge flows (daily)</div>
+            <${MiniChart} points=${onchain.bridgeFlowHistory || []} />
             <div className="muted mono">Bridge flow shifts (24h)</div>
             ${onchain.bridgeTotals.map(
               (item, index) => html`
@@ -161,7 +175,7 @@ function App() {
 
           <div className="card">
             <div className="card-label mono">Spot prices (Hyperliquid)</div>
-            <div className="muted mono">Top spot pairs by Hyperliquid feed</div>
+            <div className="muted mono">Top spot pairs with 7-day charts</div>
             ${spot.spotPrices.map(
               (asset, index) => html`
                 <div className="card-actions" key=${`${asset.symbol}-${index}`}>
@@ -170,6 +184,10 @@ function App() {
                     ${formatNumber(asset.price)} • 24h ${formatPercent(asset.dayChangePct)}
                   </span>
                 </div>
+                <${MiniChart}
+                  points=${(spot.spotHistory || []).find((history) => history.symbol === asset.symbol)?.points || []}
+                  lineClass="chart-line-price"
+                />
               `
             )}
           </div>
@@ -212,6 +230,45 @@ function RegimeCard({ label, value }) {
     <div className="card">
       <div className="card-label mono">${label}</div>
       <div className="card-value">${value || '—'}</div>
+    </div>
+  `
+}
+
+function MiniChart({ points, lineClass = 'chart-line' }) {
+  if (!Array.isArray(points) || points.length < 2) {
+    return html`<div className="muted mono chart-empty">No daily chart data</div>`
+  }
+
+  const width = 300
+  const height = 86
+  const padding = 10
+  const values = points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value))
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const range = max - min || 1
+  const xStep = (width - padding * 2) / Math.max(points.length - 1, 1)
+
+  const path = points
+    .map((point, index) => {
+      const x = padding + index * xStep
+      const y = padding + (1 - (Number(point.value) - min) / range) * (height - padding * 2)
+      return `${index === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`
+    })
+    .join(' ')
+
+  const firstDate = points[0]?.date || '—'
+  const lastDate = points[points.length - 1]?.date || '—'
+
+  return html`
+    <div className="chart-wrap">
+      <svg className="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="daily chart">
+        <path className=${lineClass} d=${path} />
+      </svg>
+      <div className="chart-meta mono muted">
+        <span>${firstDate}</span>
+        <span>${formatCompact(min)} → ${formatCompact(max)}</span>
+        <span>${lastDate}</span>
+      </div>
     </div>
   `
 }
