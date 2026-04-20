@@ -17,6 +17,11 @@ type MacroSeries = {
   frequency: 'daily' | 'monthly'
 }
 
+type DailyPoint = {
+  date: string
+  value: number
+}
+
 type DashboardEnv = {
 }
 
@@ -220,6 +225,15 @@ async function fetchPerpStructure() {
 }
 
 function fallbackOnchain() {
+  const stablecoinMcapHistory = [110, 111, 113, 112, 114, 115, 116].map((value, index) => ({
+    date: `2026-04-${String(index + 10).padStart(2, '0')}`,
+    value: value * 1_000_000_000,
+  }))
+  const bridgeFlowHistory = [120, 132, 98, 145, 138, 152, 141].map((value, index) => ({
+    date: `2026-04-${String(index + 10).padStart(2, '0')}`,
+    value: value * 1_000_000,
+  }))
+
   return {
     topChains: [
       { chain: 'Ethereum', mcap: 109000000000 },
@@ -231,12 +245,30 @@ function fallbackOnchain() {
       { chain: 'Arbitrum', inflow24h: 38000000 },
       { chain: 'Base', inflow24h: 29000000 },
     ],
+    stablecoinMcapHistory,
+    bridgeFlowHistory,
   }
 }
 
+function normalizeDailyHistory(input: unknown[], valueKeys: string[], days = 7): DailyPoint[] {
+  const parsed = input
+    .map((row) => {
+      const item = row as JsonRecord
+      const rawDate = safeNumber(item.date) ?? safeNumber(item.timestamp) ?? safeNumber(item.time)
+      const date = rawDate ? new Date(rawDate * (rawDate > 9_999_999_999 ? 1 : 1000)).toISOString().slice(0, 10) : null
+      const value = valueKeys.map((key) => safeNumber(item[key])).find((n) => n !== null) ?? null
+      return date && value !== null ? { date, value } : null
+    })
+    .filter((row): row is DailyPoint => row !== null)
+    .sort((a, b) => a.date.localeCompare(b.date))
+
+  return parsed.slice(-days)
+}
+
 async function fetchOnchainSummary() {
-  const [stablecoins, bridges] = await Promise.all([
+  const [stablecoins, stablecoinCharts, bridges] = await Promise.all([
     getJson('https://stablecoins.llama.fi/stablecoinchains'),
+    getJson('https://stablecoins.llama.fi/stablecoincharts/all'),
     getJson('https://bridges.llama.fi/overview?includeChains=true'),
   ])
 
@@ -252,16 +284,40 @@ async function fetchOnchainSummary() {
     inflow24h: safeNumber(item.dayChange) ?? 0,
   }))
 
-  return { topChains, bridgeTotals }
+  const stablecoinHistoryRaw = (((stablecoinCharts as JsonRecord).peggedUSD as JsonRecord)?.circulating as unknown[]) ?? []
+  const stablecoinMcapHistory = normalizeDailyHistory(stablecoinHistoryRaw, ['totalCirculatingUSD', 'totalCirculating', 'circulatingPeggedUSD'])
+
+  const bridgeHistoryRaw = (((bridges as JsonRecord).chartData as JsonRecord[]) ?? []).map((item) => ({
+    date: item.date,
+    value: item.dayVolume ?? item.dayChange ?? item.totalAmount,
+  }))
+  const bridgeFlowHistory = normalizeDailyHistory(bridgeHistoryRaw, ['value', 'dayVolume', 'dayChange', 'totalAmount'])
+
+  return { topChains, bridgeTotals, stablecoinMcapHistory, bridgeFlowHistory }
 }
 
 function fallbackSpotPrices() {
+  const priceHistory = {
+    BTC: [82900, 83420, 83900, 84250, 84080, 84340, 84510],
+    ETH: [3980, 4010, 4042, 4068, 4075, 4090, 4102],
+    SOL: [179, 181, 183, 185, 186, 187, 188],
+  }
+  const historyDays = 7
+  const spotHistory = Object.entries(priceHistory).map(([symbol, values]) => ({
+    symbol,
+    points: values.slice(-historyDays).map((value, index) => ({
+      date: `2026-04-${String(index + 10).padStart(2, '0')}`,
+      value,
+    })),
+  }))
+
   return {
     spotPrices: [
       { symbol: 'BTC', price: 84510, dayChangePct: 1.24 },
       { symbol: 'ETH', price: 4102, dayChangePct: 0.82 },
       { symbol: 'SOL', price: 188, dayChangePct: 2.11 },
     ],
+    spotHistory,
   }
 }
 
@@ -293,7 +349,36 @@ async function fetchSpotPrices() {
     .slice(0, 7)
 
   if (!spotPrices.length) throw new Error('no spot prices')
-  return { spotPrices }
+
+  const coinIds: Record<string, string> = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana' }
+  const spotHistory = (
+    await Promise.all(
+      spotPrices.slice(0, 3).map(async (asset) => {
+        const coinId = coinIds[asset.symbol]
+        if (!coinId) return null
+        const market = (await getJson(`https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=7`)) as JsonRecord
+        const prices = ((market.prices as unknown[]) ?? []).map((row) => Array.isArray(row) ? row : [])
+        const points = prices
+          .map((row) => ({
+            date: typeof row[0] === 'number' ? new Date(row[0]).toISOString().slice(0, 10) : null,
+            value: safeNumber(row[1]),
+          }))
+          .filter((row) => row.date && row.value !== null)
+          .map((row) => ({ date: row.date as string, value: row.value as number }))
+
+        if (!points.length) return null
+        const byDate = new Map<string, number>()
+        points.forEach((point) => byDate.set(point.date, point.value))
+        const deduped = [...byDate.entries()]
+          .map(([date, value]) => ({ date, value }))
+          .sort((a, b) => a.date.localeCompare(b.date))
+          .slice(-7)
+        return { symbol: asset.symbol, points: deduped }
+      })
+    )
+  ).filter((item): item is { symbol: string; points: DailyPoint[] } => item !== null)
+
+  return { spotPrices, spotHistory }
 }
 
 async function fetchMacroSeries(_env: DashboardEnv) {
