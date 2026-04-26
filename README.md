@@ -67,3 +67,32 @@ npx wrangler whoami
 - `src/worker.ts` routes API paths (`/api/dashboard`, `/api/random`) and serves frontend assets for all other paths.
 
 Styling: orange/green brand tints, dark-mode support and a compact/dense UI toggle for an industrial, information-dense look.
+
+## Dashboard UI inventory
+
+The UI currently renders:
+
+- Last updated timestamp.
+- Dashboard feed status summary.
+- Source check count and fallback count.
+- Key macro risk this week.
+- Policy context text.
+- Source health board rows (source, status, message).
+- Regime cards (Growth, Inflation, Perp risk tone, Policy).
+- Macro regime monitor rows (latest, delta, trend, next release, rationale).
+- Perp structure rows (name/link, funding, open interest, tag).
+- Onchain stablecoin market cap daily mini-chart.
+- Stablecoin ecosystem concentration by chain.
+- Bridge flows daily mini-chart.
+- Bridge flow shifts (24h) by chain.
+- Spot prices rows (symbol, price, 24h change).
+- Per-symbol 7-day spot mini-charts.
+
+## Scanline background effect source
+
+The looping background line is the **scanline overlay**:
+
+- Rendered by `<div className="scanline" aria-hidden="true"></div>` in `app/main.js`.
+- Animated by `.scanline { animation: scan 4s linear infinite; }` in `app/styles/app.css`.
+- Motion defined by `@keyframes scan` moving `top` from `0` to `100%`.
+- Documented in the design system as "**Scanline: Animated horizontal gradient overlay**" in `STYLING_SPEC.md`.

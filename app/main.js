@@ -38,13 +38,13 @@ function App() {
     try {
       const response = await fetch('/api/dashboard')
       if (!response.ok) {
-        throw new Error(`Dashboard fetch failed (${response.status})`)
+        throw new Error(`Macro fetch failed (${response.status})`)
       }
       const payload = await response.json()
       setDashboard(payload)
     } catch (fetchError) {
       console.error(fetchError)
-      setError(fetchError instanceof Error ? fetchError.message : 'Unknown dashboard error')
+      setError(fetchError instanceof Error ? fetchError.message : 'Unknown macro error')
     } finally {
       setLoading(false)
     }
@@ -75,7 +75,6 @@ function App() {
 
   return html`
     <div className="page">
-      <div className="scanline" aria-hidden="true"></div>
       <${Header} />
       <main className="container">
         <div className="page-header">
@@ -84,7 +83,7 @@ function App() {
 
         <section className="card-row">
           <div className="card">
-            <div className="card-label mono">Dashboard feed status</div>
+            <div className="card-label mono">Macro feed status</div>
             <div className="card-value">${loading ? 'Loading…' : error ? 'Attention needed' : 'Live feed active'}</div>
             <div className="card-actions">
               <span className="muted mono">${error || `${sourceStatuses.length} sources checked • ${fallbackCount} fallback`}</span>
@@ -203,7 +202,7 @@ function Header() {
     <header className="header">
       <div className="container header-inner">
         <div className="brand">
-          <h1>Dashboard</h1>
+          <h1>Macro</h1>
           <span className="muted mono">Industrial • Dense • Small</span>
         </div>
         <div className="controls">
