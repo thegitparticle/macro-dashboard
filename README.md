@@ -38,7 +38,7 @@ npm run deploy
 Equivalent direct command:
 
 ```bash
-npm run build && npx wrangler deploy
+npm run build && npx wrangler@^4.103.0 deploy --config wrangler.jsonc
 ```
 
 ## Required environment variables for CI
@@ -62,8 +62,8 @@ npx wrangler whoami
 
 ## Why Worker-only works here
 
-- `wrangler.toml` defines a Worker entrypoint (`main = "src/worker.ts"`).
-- `wrangler.toml` also defines static assets (`[assets] directory = "dist"`).
+- `wrangler.jsonc` defines a Worker entrypoint (`main = "src/worker.ts"`).
+- `wrangler.jsonc` also defines static assets (`assets.directory = "dist"`).
 - `src/worker.ts` routes API paths (`/api/dashboard`, `/api/random`) and serves frontend assets for all other paths.
 
 Styling: orange/green brand tints, dark-mode support and a compact/dense UI toggle for an industrial, information-dense look.

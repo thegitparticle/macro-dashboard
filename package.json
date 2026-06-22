@@ -5,10 +5,12 @@
     "dev": "node dev-server.js",
     "start": "node dev-server.js",
     "build": "node scripts/build-dist.mjs",
-    "deploy": "npm run build && wrangler deploy --config wrangler.jsonc",
+    "deploy": "npm run build && npx wrangler@^4.103.0 deploy --config wrangler.jsonc",
     "preview": "wrangler dev"
   },
   "devDependencies": {
     "wrangler": "^4.103.0"
-  }
+  },
+  "version": "0.1.0",
+  "packageManager": "bun@1.2.15"
 }
