@@ -1,0 +1,8 @@
+# Safety net for Cloudflare's auto-generated Workers Assets config.
+# If the dashboard deploy command falls back to assets.directory = ".",
+# never upload dependencies or build/runtime metadata as public assets.
+node_modules/
+.git/
+.wrangler/
+dist/
+*.log
