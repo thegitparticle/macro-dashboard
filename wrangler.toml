@@ -1,6 +1,0 @@
-name = "macro-dashboard"
-compatibility_date = "2026-04-17"
-main = "src/worker.ts"
-
-[assets]
-directory = "dist"
